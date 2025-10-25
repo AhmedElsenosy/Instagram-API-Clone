@@ -9,6 +9,7 @@ User = settings.AUTH_USER_MODEL
 # Basic User Serializer (for references)
 # -----------------------------------------
 class UserPublicSerializer(serializers.Serializer):
+    """Public user info serializer (used inside other serializers)"""
     id = serializers.IntegerField(read_only=True)
     username = serializers.CharField(read_only=True)
     image = serializers.ImageField(read_only=True, required=False)
@@ -18,6 +19,7 @@ class UserPublicSerializer(serializers.Serializer):
 # Post Media Serializer
 # -----------------------------------------
 class PostMediaSerializer(serializers.ModelSerializer):
+    """Serializer for post media files (image/video)"""
     class Meta:
         model = PostMedia
         fields = ['id', 'file', 'type']
@@ -38,6 +40,7 @@ class CommentLikeSerializer(serializers.ModelSerializer):
 # Comment Serializer (supports nested replies)
 # -----------------------------------------
 class CommentSerializer(serializers.ModelSerializer):
+    """Serializer for comments and replies"""
     author = UserPublicSerializer(read_only=True)
     replies = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField()
@@ -62,15 +65,22 @@ class CommentSerializer(serializers.ModelSerializer):
         return CommentSerializer(replies_qs, many=True).data
 
     def get_likes_count(self, obj):
+        """Return number of likes for the comment"""
         return obj.likes.count()
 
     def create(self, validated_data):
         """Create comment or reply with author/post from context"""
         user = self.context['request'].user
         post = self.context['post']
-        parent_comment = validated_data.get('parent_comment')
+
+        # ✅ Remove parent_comment to avoid passing it twice
+        parent_comment = validated_data.pop('parent_comment', None)
+
         return Comment.objects.create(
-            author=user, post=post, parent_comment=parent_comment, **validated_data
+            author=user,
+            post=post,
+            parent_comment=parent_comment,
+            **validated_data
         )
 
 
@@ -78,6 +88,7 @@ class CommentSerializer(serializers.ModelSerializer):
 # Like Serializer (used for debugging or count)
 # -----------------------------------------
 class LikeSerializer(serializers.ModelSerializer):
+    """Serializer for post likes"""
     user = UserPublicSerializer(read_only=True)
 
     class Meta:
@@ -89,6 +100,7 @@ class LikeSerializer(serializers.ModelSerializer):
 # Post Serializer
 # -----------------------------------------
 class PostSerializer(serializers.ModelSerializer):
+    """Main post serializer with nested media, likes, and comments"""
     author = UserPublicSerializer(read_only=True)
     media = PostMediaSerializer(many=True, read_only=True)
     likes_count = serializers.SerializerMethodField()
@@ -108,11 +120,11 @@ class PostSerializer(serializers.ModelSerializer):
         read_only_fields = ['author', 'media', 'likes_count', 'comments']
 
     def get_likes_count(self, obj):
-        """Return total likes for post"""
+        """Return total likes for the post"""
         return obj.likes.count()
 
     def get_comments(self, obj):
-        """Return top-level comments only"""
+        """Return top-level comments only (exclude replies)"""
         qs = obj.comments.filter(parent_comment__isnull=True)
         return CommentSerializer(qs, many=True).data
 
@@ -123,7 +135,7 @@ class PostSerializer(serializers.ModelSerializer):
         """
         post = Post.objects.create(**validated_data)  # ✅ no author here
 
-        # handle uploaded media files if any
+        # Handle uploaded media files if any
         request = self.context.get('request')
         if request and hasattr(request, 'FILES'):
             media_files = request.FILES.getlist('media')
